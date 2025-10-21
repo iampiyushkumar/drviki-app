@@ -71,10 +71,14 @@ jobs:
    
       # this step helps in trigger and i saved RENDER_DEPLOY_HOOK in github secret token
       - name: Trigger Render Deploy Hook
-        if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
         env:
           RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
-          echo "Triggering Render deploy…"
-          curl -fsSL -X POST "$RENDER_DEPLOY_HOOK"
-          echo "Render deploy hook triggered ✅"
+         if [ -n "$RENDER_DEPLOY_HOOK" ]; then
+         echo "Triggering Render deploy…"
+         curl -fsSL -X POST "$RENDER_DEPLOY_HOOK"
+         echo "Render deploy hook triggered ✅"
+         else
+         echo "No Render deploy hook defined, skipping."
+         fi
+
