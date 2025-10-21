@@ -1,0 +1,80 @@
+name: CI/CD — build, test, push, deploy
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  IMAGE_LOCAL: drviki-app:ci
+  IMAGE_NAME: drviki-app
+
+jobs:
+  build-test-push-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------- BUILD ----------
+      - name: Build Docker image
+        run: |
+          echo "=== Building image: $IMAGE_LOCAL ==="
+          docker build -t "$IMAGE_LOCAL" .
+
+      # ---------- TEST (HEALTH CHECK) ----------
+      - name: Run container for tests
+        run: |
+          echo "=== Starting test container ==="
+          docker run -d --rm -p 8080:8080 --name drviki-test "$IMAGE_LOCAL"
+          echo "=== Waiting for app to become healthy and respond ==="
+          for i in {1..12}; do
+            if curl -fsS http://localhost:8080 > /dev/null; then
+              echo "Health check passed ✅"
+              exit 0
+            fi
+            echo "Retry #$i …"
+            sleep 5
+          done
+          echo "Health check failed ❌"
+          docker logs drviki-test || true
+          exit 1
+
+      - name: Stop test container
+        if: always()
+        run: docker stop drviki-test || true
+
+      # ---------- LOGIN TO DOCKER HUB ----------
+      - name: Docker Hub login
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+
+      # ---------- TAG & PUSH ----------
+      - name: Tag image with :latest and :sha
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        run: |
+          docker tag "$IMAGE_LOCAL" "$DOCKER_USERNAME/$IMAGE_NAME:latest"
+          docker tag "$IMAGE_LOCAL" "$DOCKER_USERNAME/$IMAGE_NAME:sha-${{ github.sha }}"
+
+      - name: Push images to Docker Hub
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        run: |
+          docker push "$DOCKER_USERNAME/$IMAGE_NAME:latest"
+          docker push "$DOCKER_USERNAME/$IMAGE_NAME:sha-${{ github.sha }}"
+
+   
+      # this step helps in trigger and i saved RENDER_DEPLOY_HOOK in github secret token
+      - name: Trigger Render Deploy Hook
+        if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          echo "Triggering Render deploy…"
+          curl -fsSL -X POST "$RENDER_DEPLOY_HOOK"
+          echo "Render deploy hook triggered ✅"
